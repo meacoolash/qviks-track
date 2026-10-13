@@ -1,6 +1,6 @@
 {
   "name": "@qviks/track",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Visit tracking for our Next.js sites: pageview + engaged beacon, server relay to Qviks API v1, owner opt-out switch.",
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "next": ">=15",
+    "next": ">=14",
     "react": ">=19"
   },
   "devDependencies": {
