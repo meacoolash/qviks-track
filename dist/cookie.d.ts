@@ -11,3 +11,10 @@ export declare const HUB_ORIGIN = "https://www.qviks.com";
 export declare const HUB_URL = "https://www.qviks.com/notrack";
 /** Is the opt-out cookie set in this Cookie header / document.cookie? */
 export declare function hasNotrackCookie(cookieHeader: string | null | undefined): boolean;
+/**
+ * Visitor id, mirrored from localStorage ("qviks-vid") into a first-party cookie so
+ * server routes (lead form, chat) can tie a submission to the visits before it.
+ */
+export declare const VISITOR_COOKIE = "qviks_vid";
+/** The visitor id from a Cookie header, or null. */
+export declare function visitorIdFromCookie(cookieHeader: string | null | undefined): string | null;

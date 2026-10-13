@@ -1,6 +1,6 @@
-import { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie } from "./cookie.js";
+import { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
 
-export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie } from "./cookie.js";
+export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, VISITOR_COOKIE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
 
 /*
  * Server side for a site that tracks into Qviks. Plain Web Request/Response,
@@ -8,7 +8,7 @@ export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie 
  *
  *   app/api/track/route.ts    export const POST = createTrackHandler({ key: process.env.QVIKS_API_KEY })
  *   app/api/notrack/route.ts  export const GET = createNotrackHandler()
- *   middleware / proxy        const r = notrackRedirect(req); if (r) return r;
+ *   middleware / proxy        const r = notrackRedirect(req) ?? linkRedirect(req); if (r) return r;
  */
 
 const QVIKS_TIMEOUT_MS = 5000;
@@ -34,6 +34,8 @@ export function cookieDomain(host: string): string {
 /* ─── POST /api/track ───────────────────────────────────────────────────── */
 
 export type Visitor = {
+  /** Analytics visitor id (cookie qviks_vid), ties a lead / chat to the visits before it. */
+  id?: string | null;
   ip?: string | null;
   ua?: string | null;
   referer?: string | null;
@@ -46,6 +48,7 @@ export type Visitor = {
 export function visitorFrom(req: Request): Visitor {
   const h = req.headers;
   return {
+    id: visitorIdFromCookie(h.get("cookie")),
     ip: h.get("x-forwarded-for")?.split(",")[0].trim() || h.get("x-real-ip") || null,
     ua: h.get("user-agent"),
     referer: h.get("referer"),
@@ -57,6 +60,7 @@ export function visitorFrom(req: Request): Visitor {
 
 export function visitorHeaders(v: Visitor): Record<string, string> {
   const out: Record<string, string> = {};
+  if (v.id) out["x-qviks-visitor-id"] = v.id;
   if (v.ip) out["x-qviks-visitor-ip"] = v.ip;
   if (v.ua) out["x-qviks-visitor-ua"] = v.ua;
   if (v.referer) out["x-qviks-visitor-referer"] = v.referer;
@@ -226,4 +230,29 @@ export function notrackRedirect(req: Request): Response | null {
     return new Response(null, { status: 307, headers: { Location: HUB_URL } });
   }
   return null;
+}
+
+/* ─── /q/<code>: tracked short links (middleware / proxy) ───────────────── */
+
+const LINK_RE = /^(.*?)\/q\/([A-Za-z0-9_-]{1,64})(\/.*)?$/;
+
+/**
+ * Tracked links for QR codes, posters, campaigns and links sent to one person:
+ *   /q/<code>          -> /?utm_source=q&utm_campaign=<code>
+ *   /q/<code>/<path>   -> /<path>?utm_source=q&utm_campaign=<code>
+ *   /<base>/q/<code>   -> /<base>?...   (apps serving a site under a path prefix)
+ * The code says what it is (plagat1, ig-bio, jana); Qviks groups visits by it.
+ * Query params on the link are kept. 307: never cached, the target may change.
+ * Returns null for any other path.
+ */
+export function linkRedirect(req: Request): Response | null {
+  const url = new URL(req.url);
+  const m = LINK_RE.exec(url.pathname);
+  if (!m || m[1].startsWith("/api") || m[1].startsWith("/_next")) return null;
+  url.pathname = m[1] + (m[3] ?? "") || "/";
+  url.searchParams.set("utm_source", "q");
+  url.searchParams.set("utm_campaign", m[2].toLowerCase());
+  // Absolute: Next middleware rejects a relative Location.
+  const location = `${url.protocol}//${hostOf(req)}${url.pathname}${url.search}`;
+  return new Response(null, { status: 307, headers: { Location: location, "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
 }

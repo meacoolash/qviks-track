@@ -1,9 +1,11 @@
-export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie } from "./cookie.js";
+export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, VISITOR_COOKIE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
 /** localhost, 127.0.0.1, LAN and *.vercel.app previews: no chain through production, no Domain on cookies. */
 export declare function isPreviewHost(host: string): boolean;
 /** The domain a cookie set on `host` should cover: qviks.com for *.qviks.com, else host minus www. */
 export declare function cookieDomain(host: string): string;
 export type Visitor = {
+    /** Analytics visitor id (cookie qviks_vid), ties a lead / chat to the visits before it. */
+    id?: string | null;
     ip?: string | null;
     ua?: string | null;
     referer?: string | null;
@@ -59,3 +61,13 @@ export declare function createNotrackHandler(opts?: NotrackHandlerOptions): (req
  * Returns null when the request is not about notrack.
  */
 export declare function notrackRedirect(req: Request): Response | null;
+/**
+ * Tracked links for QR codes, posters, campaigns and links sent to one person:
+ *   /q/<code>          -> /?utm_source=q&utm_campaign=<code>
+ *   /q/<code>/<path>   -> /<path>?utm_source=q&utm_campaign=<code>
+ *   /<base>/q/<code>   -> /<base>?...   (apps serving a site under a path prefix)
+ * The code says what it is (plagat1, ig-bio, jana); Qviks groups visits by it.
+ * Query params on the link are kept. 307: never cached, the target may change.
+ * Returns null for any other path.
+ */
+export declare function linkRedirect(req: Request): Response | null;

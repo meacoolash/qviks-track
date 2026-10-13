@@ -13,3 +13,13 @@ export const HUB_URL = `${HUB_ORIGIN}/notrack`;
 export function hasNotrackCookie(cookieHeader) {
     return new RegExp(`(^|;\\s*)${NOTRACK_COOKIE}=1(;|$)`).test(cookieHeader ?? "");
 }
+/**
+ * Visitor id, mirrored from localStorage ("qviks-vid") into a first-party cookie so
+ * server routes (lead form, chat) can tie a submission to the visits before it.
+ */
+export const VISITOR_COOKIE = "qviks_vid";
+/** The visitor id from a Cookie header, or null. */
+export function visitorIdFromCookie(cookieHeader) {
+    const m = new RegExp(`(?:^|;\\s*)${VISITOR_COOKIE}=([A-Za-z0-9-]{8,64})(?:;|$)`).exec(cookieHeader ?? "");
+    return m ? m[1] : null;
+}

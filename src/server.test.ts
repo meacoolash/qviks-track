@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { cookieDomain, createNotrackHandler, createTrackHandler, notrackRedirect } from "./server";
-import { hasNotrackCookie } from "./cookie";
+import { cookieDomain, createNotrackHandler, createTrackHandler, linkRedirect, notrackRedirect, visitorFrom } from "./server";
+import { hasNotrackCookie, visitorIdFromCookie } from "./cookie";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -127,5 +127,35 @@ describe("createTrackHandler", () => {
     const POST = createTrackHandler({ key: "k1", apiUrl: "https://q.example" });
     expect((await (await POST(beacon({ host: "localhost:3000", origin: "http://localhost:3000" }))).json()).skipped).toBe("localhost");
     expect((await POST(beacon({}, [1]))).status).toBe(400);
+  });
+});
+
+describe("linkRedirect", () => {
+  const loc = (url: string) => linkRedirect(get(url))?.headers.get("location") ?? null;
+  it("/q/<code> -> home with utm", () => {
+    const res = linkRedirect(get("https://nickdemetry.com/q/Plagat1"))!;
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://nickdemetry.com/?utm_source=q&utm_campaign=plagat1");
+  });
+  it("keeps a target path and existing params", () => {
+    expect(loc("https://joymeseci.com/q/jana/return-to-roots?x=1")).toBe("https://joymeseci.com/return-to-roots?x=1&utm_source=q&utm_campaign=jana");
+  });
+  it("path prefix (shared host)", () => {
+    expect(loc("https://sites.qviks.com/demo/hightenso/q/ig")).toBe("https://sites.qviks.com/demo/hightenso?utm_source=q&utm_campaign=ig");
+  });
+  it("ignores other paths", () => {
+    expect(loc("https://mikistec.com/q")).toBeNull();
+    expect(loc("https://mikistec.com/faq/")).toBeNull();
+    expect(loc("https://mikistec.com/api/q/x")).toBeNull();
+    expect(loc("https://mikistec.com/q/bad.code")).toBeNull();
+  });
+});
+
+describe("visitor id cookie", () => {
+  it("is read from the Cookie header and forwarded", () => {
+    expect(visitorIdFromCookie("a=1; qviks_vid=3f2a9c1e-0000-4000-8000-123456789abc; b=2")).toBe("3f2a9c1e-0000-4000-8000-123456789abc");
+    expect(visitorIdFromCookie("qviks_vid=<script>")).toBeNull();
+    const req = new Request("https://x.com/api/lead", { headers: { cookie: "qviks_vid=abcdef123456" } });
+    expect(visitorFrom(req).id).toBe("abcdef123456");
   });
 });
