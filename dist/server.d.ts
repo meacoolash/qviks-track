@@ -1,0 +1,61 @@
+export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie } from "./cookie.js";
+/** localhost, 127.0.0.1, LAN and *.vercel.app previews: no chain through production, no Domain on cookies. */
+export declare function isPreviewHost(host: string): boolean;
+/** The domain a cookie set on `host` should cover: qviks.com for *.qviks.com, else host minus www. */
+export declare function cookieDomain(host: string): string;
+export type Visitor = {
+    ip?: string | null;
+    ua?: string | null;
+    referer?: string | null;
+    host?: string | null;
+    country?: string | null;
+    city?: string | null;
+};
+/** Visitor context from the incoming browser request (forwarded as x-qviks-visitor-*). */
+export declare function visitorFrom(req: Request): Visitor;
+export declare function visitorHeaders(v: Visitor): Record<string, string>;
+export type TrackHandlerOptions = {
+    /**
+     * Qviks API v1 key of the site's org (server-only, never NEXT_PUBLIC_). A
+     * function when one app serves many orgs: return null to skip the beacon.
+     */
+    key: string | undefined | ((req: Request, body: Record<string, unknown>) => string | null | undefined);
+    /** Qviks base URL. Default: process.env.QVIKS_API_URL. */
+    apiUrl?: string;
+};
+/**
+ * Same-origin relay: browser beacon -> Qviks POST /api/v1/track with the key
+ * and the visitor headers. Checks only this domain can make (Qviks v1 sees no
+ * cookies or Origin): body size, localhost (ANALYTICS_TRACK_LOCALHOST=true to
+ * override), the opt-out cookie and the same-origin check. Beacons failing
+ * them are not forwarded. Missing config = silently skipped.
+ */
+export declare function createTrackHandler(opts: TrackHandlerOptions): (req: Request) => Promise<Response>;
+export type NotrackHandlerOptions = {
+    /**
+     * Extra hosts `next` may point to. Always allowed: this host's domain and
+     * *.qviks.com (the switch and the sites app carry the chain on).
+     */
+    allowHost?: (host: string) => boolean;
+    /**
+     * Apps serving several domains (sites): with ?chain=1, hop through these
+     * origins (each sets its own cookie) before `next`. This host's domain is skipped.
+     */
+    chainOrigins?: () => string[];
+};
+/**
+ * GET /api/notrack?v=1|0&next=<url>[&chain=1]: one hop of the switch for all
+ * our sites (www.qviks.com/notrack). Sets (v=1) or clears (v=0) the opt-out
+ * cookie for this domain, then redirects to `next` if it is a path here or an
+ * https URL on an allowed host, else to the switch. No open redirect. Preview
+ * hosts set a host-only cookie and never chain.
+ */
+export declare function createNotrackHandler(opts?: NotrackHandlerOptions): (req: Request) => Response;
+/**
+ * For middleware/proxy, first thing:
+ *   ?notrack=1|0 on any page -> the switch on Qviks (sets the cookie on all our
+ *   domains, comes back here without the param). Preview hosts: only this
+ *   host's /api/notrack. /notrack -> the switch page.
+ * Returns null when the request is not about notrack.
+ */
+export declare function notrackRedirect(req: Request): Response | null;

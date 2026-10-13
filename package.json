@@ -1,0 +1,31 @@
+{
+  "name": "@qviks/track",
+  "version": "1.0.0",
+  "description": "Visit tracking for our Next.js sites: pageview + engaged beacon, server relay to Qviks API v1, owner opt-out switch.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
+    "./cookie": { "types": "./dist/cookie.d.ts", "default": "./dist/cookie.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "next": ">=15",
+    "react": ">=19"
+  },
+  "devDependencies": {
+    "@types/bun": "1.2.20",
+    "@types/node": "22.15.3",
+    "@types/react": "19.2.2",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "typescript": "5.9.3"
+  }
+}
