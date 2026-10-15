@@ -263,3 +263,56 @@ export function QviksTracker({ site, dot = true }) {
     useTrack(site);
     return dot ? _jsx(NotrackDot, {}) : null;
 }
+/** Name of the hidden honeypot field; humans never fill it, bots do. */
+export const HONEYPOT_FIELD = "hp_url";
+/**
+ * Headless contact form: the site keeps its own markup and copy, this posts it.
+ *   const { status, error, onSubmit } = useLeadForm();
+ *   <form onSubmit={onSubmit}><input name="name" /><input name="email" type="email" />
+ *     <textarea name="message" /><LeadHoneypot /><button disabled={status === "sending"}>...</button></form>
+ * Every named field is sent as JSON to `endpoint` (createLeadHandler in
+ * @qviks/track/server); `form` picks the server-side form entry. `error` is the
+ * server's message or `fallbackError`. The form is reset after a successful send.
+ */
+export function useLeadForm({ endpoint = "/api/lead", form, fallbackError = "Could not send. Please try again.", } = {}) {
+    const [status, setStatus] = useState("idle");
+    const [error, setError] = useState(null);
+    async function onSubmit(e) {
+        e.preventDefault();
+        const el = e.currentTarget;
+        const data = {};
+        new FormData(el).forEach((v, k) => {
+            if (typeof v === "string")
+                data[k] = v;
+        });
+        // Ties the lead to the visits before it (cookie qviks_vid), unless tracking is off.
+        if (!hasNotrackCookie(document.cookie))
+            getOrCreateVisitorId();
+        setStatus("sending");
+        setError(null);
+        try {
+            const res = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(form ? { ...data, form } : data),
+            });
+            if (!res.ok) {
+                const body = (await res.json().catch(() => null));
+                setError(res.status === 400 && body?.error ? body.error : fallbackError);
+                setStatus("error");
+                return;
+            }
+            el.reset();
+            setStatus("sent");
+        }
+        catch {
+            setError(fallbackError);
+            setStatus("error");
+        }
+    }
+    return { status, error, onSubmit, reset: () => setStatus("idle") };
+}
+/** The honeypot input, hidden from people and screen readers. Inline styles: no Tailwind scan of node_modules. */
+export function LeadHoneypot() {
+    return (_jsx("div", { "aria-hidden": "true", style: { position: "absolute", left: "-10000px", width: 1, height: 1, overflow: "hidden" }, children: _jsx("input", { type: "text", name: HONEYPOT_FIELD, tabIndex: -1, autoComplete: "off", defaultValue: "" }) }));
+}

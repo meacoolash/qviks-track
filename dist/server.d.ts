@@ -71,3 +71,39 @@ export declare function notrackRedirect(req: Request): Response | null;
  * Returns null for any other path.
  */
 export declare function linkRedirect(req: Request): Response | null;
+export type LeadHandlerOptions = {
+    /** Qviks API v1 key of the site's org. A function when one app serves many orgs: null = 404. */
+    key: string | undefined | ((req: Request, body: Record<string, unknown>) => string | null | undefined);
+    /** Qviks base URL. Default: process.env.QVIKS_API_URL. */
+    apiUrl?: string;
+    /**
+     * Forms this site has, by the `form` key the browser posts. Everything about a
+     * form (topic, contact tags, extra fields) is decided here, never by the browser.
+     * A post without `form` uses "default"; an unknown `form` is rejected.
+     */
+    forms?: Record<string, LeadForm>;
+};
+export type LeadForm = {
+    /** Shown in the Qviks notification subject ("Website inquiry", "domskolak.sk"). Max 60 chars. */
+    topic?: string;
+    /** Contact tags in Qviks, created there if missing (max 5, 40 chars each). */
+    tags?: string[];
+    /**
+     * Qviks capture entry: "lead_form" (wants an answer, lands in the pipeline),
+     * "magnet" (newsletter, freebie), "call". Default: Qviks decides
+     * (message = lead_form, no message = magnet).
+     */
+    source?: "lead_form" | "magnet" | "call";
+    /** Extra fields (name -> label) folded into the message as "Label: value" lines, 300 chars each. */
+    extras?: Record<string, string>;
+};
+/**
+ * Same-origin relay for contact forms: browser form -> Qviks POST /api/v1/leads
+ * with the key and the visitor headers (ties the lead to its visits). Pair it
+ * with useLeadForm() from @qviks/track. Guards here: body size, same-origin
+ * (foreign posts get a silent 201, bots don't learn the gate), honeypot
+ * `hp_url`, form whitelist. Qviks does the rest (validation, 5/min per visitor
+ * IP, contact + notification). Qviks status and JSON pass through unchanged;
+ * 502 { error } when it is unreachable or the key / URL is missing.
+ */
+export declare function createLeadHandler(opts: LeadHandlerOptions): (req: Request) => Promise<Response>;

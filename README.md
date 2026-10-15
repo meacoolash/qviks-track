@@ -1,6 +1,6 @@
 # @qviks/track
 
-Visit tracking for our Next.js sites, stored in [Qviks](https://www.qviks.com) analytics.
+Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https://www.qviks.com) analytics.
 
 - **Pageview + `engaged`**: every pageview is recorded (bots included); `engaged` follows once the page
   was visible 3s+ with real input (scroll, pointer, touch, key) or 30s without input. Qviks labels a
@@ -14,6 +14,10 @@ Visit tracking for our Next.js sites, stored in [Qviks](https://www.qviks.com) a
   poster or person is just a new code. Qviks shows visits and leads per code.
 - **Lead -> visit**: the visitor id is mirrored into the `qviks_vid` cookie and forwarded with server calls
   (`visitorFrom`), so Qviks ties a form submission to the visits before it.
+- **Contact forms**: `useLeadForm()` posts any form to the site's own `/api/lead`;
+  `createLeadHandler` checks origin + honeypot, whitelists the form, and forwards to Qviks
+  `/api/v1/leads` with the visitor id, so the lead shows on its visits. Topic, tags and extra
+  fields are decided on the server, never by the browser.
 - **Owner opt-out**: one switch at [www.qviks.com/notrack](https://www.qviks.com/notrack) sets a cookie
   on every domain we track (each domain serves `/api/notrack`). A green dot top left shows it.
 
@@ -22,7 +26,7 @@ No secrets live here: keys come from each project's environment.
 ## Install
 
 ```sh
-bun add github:meacoolash/qviks-track#v1.1.0
+bun add github:meacoolash/qviks-track#v1.2.0
 ```
 
 Env (server only): `QVIKS_API_URL`, and the org key, e.g. `QVIKS_API_KEY`.
@@ -48,6 +52,22 @@ const r = notrackRedirect(req) ?? linkRedirect(req);
 if (r) return r;
 ```
 
+Contact form (optional):
+
+```tsx
+// app/api/lead/route.ts
+import { createLeadHandler } from "@qviks/track/server";
+export const POST = createLeadHandler({
+  key: process.env.QVIKS_API_KEY,
+  forms: { default: { topic: "mysite.com", tags: ["Web Form"], source: "lead_form" } },
+});
+
+// the form (client component): own markup, named fields name / email / message (+ form extras)
+import { useLeadForm, LeadHoneypot } from "@qviks/track";
+const { status, error, onSubmit } = useLeadForm();
+<form onSubmit={onSubmit}>...<LeadHoneypot /></form>
+```
+
 Then add the domain to the switch's chain in Qviks (`src/lib/notrack.ts`, `STANDALONE_ORIGINS`).
 Sites served by the `sites` app are covered automatically.
 
@@ -57,8 +77,8 @@ Custom events: `trackEvent("mysite", "cta_click", { target: "whatsapp" })`.
 
 | Path | |
 |---|---|
-| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `trackEvent`, `NotrackDot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
-| `@qviks/track/server` | `createTrackHandler`, `createNotrackHandler`, `notrackRedirect`, `linkRedirect`, `cookieDomain`, `isPreviewHost`, `visitorFrom` |
+| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `trackEvent`, `NotrackDot`, `useLeadForm`, `LeadHoneypot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
+| `@qviks/track/server` | `createTrackHandler`, `createLeadHandler`, `createNotrackHandler`, `notrackRedirect`, `linkRedirect`, `cookieDomain`, `isPreviewHost`, `visitorFrom` |
 | `@qviks/track/cookie` | `NOTRACK_COOKIE`, `HUB_URL`, `hasNotrackCookie`, `VISITOR_COOKIE`, `visitorIdFromCookie` (safe anywhere) |
 
 ## Develop

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { cookieDomain, createNotrackHandler, createTrackHandler, linkRedirect, notrackRedirect, visitorFrom } from "./server";
+import { cookieDomain, createLeadHandler, createNotrackHandler, createTrackHandler, linkRedirect, notrackRedirect, visitorFrom } from "./server";
 import { hasNotrackCookie, visitorIdFromCookie } from "./cookie";
 
 const realFetch = globalThis.fetch;
@@ -157,5 +157,82 @@ describe("visitor id cookie", () => {
     expect(visitorIdFromCookie("qviks_vid=<script>")).toBeNull();
     const req = new Request("https://x.com/api/lead", { headers: { cookie: "qviks_vid=abcdef123456" } });
     expect(visitorFrom(req).id).toBe("abcdef123456");
+  });
+});
+
+describe("createLeadHandler", () => {
+  const post = (body: unknown, origin = "https://domskolak.sk") =>
+    new Request("https://domskolak.sk/api/lead", {
+      method: "POST",
+      headers: { host: "domskolak.sk", origin, "content-type": "application/json", cookie: "qviks_vid=abcdef12-3456", "x-forwarded-for": "1.2.3.4" },
+      body: JSON.stringify(body),
+    });
+  const POST = createLeadHandler({
+    key: "k1",
+    apiUrl: "https://q.test/",
+    forms: { default: { topic: "domskolak.sk", tags: ["Web"], source: "lead_form", extras: { child: "Vek dieťaťa" } } },
+  });
+
+  it("relays to Qviks with key, visitor headers and folded extras", async () => {
+    let seen: { url: string; init: RequestInit } | null = null;
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      seen = { url, init };
+      return Response.json({ ok: true, saved: true }, { status: 201 });
+    }) as unknown as typeof fetch;
+    const res = await POST(post({ name: "Jana", email: "j@x.sk", message: "Ahoj", child: "5", topic: "spoofed", tags: ["x"] }));
+    expect(res.status).toBe(201);
+    expect(seen!.url).toBe("https://q.test/api/v1/leads");
+    const h = seen!.init.headers as Record<string, string>;
+    expect(h.Authorization).toBe("Bearer k1");
+    expect(h["x-qviks-visitor-id"]).toBe("abcdef12-3456");
+    expect(h["x-qviks-visitor-ip"]).toBe("1.2.3.4");
+    expect(JSON.parse(String(seen!.init.body))).toEqual({
+      name: "Jana",
+      email: "j@x.sk",
+      message: "Vek dieťaťa: 5\n---\nAhoj",
+      source: "lead_form",
+      topic: "domskolak.sk",
+      tags: ["Web"],
+    });
+  });
+
+  it("silently acks a foreign origin and a filled honeypot without calling Qviks", async () => {
+    const f = mock(async () => Response.json({}));
+    globalThis.fetch = f as unknown as typeof fetch;
+    expect((await POST(post({ name: "a", email: "a@b.cz" }, "https://evil.test"))).status).toBe(201);
+    expect((await POST(post({ name: "a", email: "a@b.cz", hp_url: "http://spam" }))).status).toBe(200);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("does not tie the lead to visits when tracking is off", async () => {
+    let h: Record<string, string> = {};
+    globalThis.fetch = mock(async (_u: string, init: RequestInit) => {
+      h = init.headers as Record<string, string>;
+      return Response.json({ ok: true }, { status: 201 });
+    }) as unknown as typeof fetch;
+    const req = new Request("https://domskolak.sk/api/lead", {
+      method: "POST",
+      headers: { host: "domskolak.sk", origin: "https://domskolak.sk", cookie: "qviks_vid=abcdef12-3456; qviks_no_track=1" },
+      body: JSON.stringify({ name: "a", email: "a@b.cz" }),
+    });
+    expect((await POST(req)).status).toBe(201);
+    expect(h["x-qviks-visitor-id"]).toBeUndefined();
+  });
+
+  it("rejects an unknown form and passes Qviks errors through", async () => {
+    expect((await POST(post({ form: "nope", name: "a", email: "a@b.cz" }))).status).toBe(400);
+    globalThis.fetch = mock(async () => Response.json({ error: "Name and a valid email are required." }, { status: 400 })) as unknown as typeof fetch;
+    const res = await POST(post({ name: "", email: "x" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Name and a valid email are required." });
+  });
+
+  it("502 when Qviks is unreachable or not configured", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("down");
+    }) as unknown as typeof fetch;
+    expect((await POST(post({ name: "a", email: "a@b.cz" }))).status).toBe(502);
+    const noKey = createLeadHandler({ key: undefined, apiUrl: "https://q.test" });
+    expect((await noKey(post({ name: "a", email: "a@b.cz" }))).status).toBe(502);
   });
 });

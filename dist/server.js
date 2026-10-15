@@ -216,3 +216,96 @@ export function linkRedirect(req) {
     const location = `${url.protocol}//${hostOf(req)}${url.pathname}${url.search}`;
     return new Response(null, { status: 307, headers: { Location: location, "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
 }
+// Qviks keeps the first 1000 characters of a message.
+const LEAD_MESSAGE_MAX = 1000;
+/**
+ * Same-origin relay for contact forms: browser form -> Qviks POST /api/v1/leads
+ * with the key and the visitor headers (ties the lead to its visits). Pair it
+ * with useLeadForm() from @qviks/track. Guards here: body size, same-origin
+ * (foreign posts get a silent 201, bots don't learn the gate), honeypot
+ * `hp_url`, form whitelist. Qviks does the rest (validation, 5/min per visitor
+ * IP, contact + notification). Qviks status and JSON pass through unchanged;
+ * 502 { error } when it is unreachable or the key / URL is missing.
+ */
+export function createLeadHandler(opts) {
+    const forms = opts.forms ?? { default: {} };
+    return async function POST(req) {
+        const len = Number(req.headers.get("content-length") || 0);
+        if (len > 16_384)
+            return json({ error: "Invalid request" }, 413);
+        const host = hostOf(req);
+        let originHost = null;
+        try {
+            originHost = new URL(req.headers.get("origin") || req.headers.get("referer") || "").host.toLowerCase();
+        }
+        catch { }
+        if (originHost !== host)
+            return json({ ok: true }, 201);
+        let body;
+        try {
+            body = await req.json();
+        }
+        catch {
+            return json({ error: "Invalid request" }, 400);
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body))
+            return json({ error: "Invalid request" }, 400);
+        const b = body;
+        if (typeof b.hp_url === "string" && b.hp_url.trim() !== "")
+            return json({ ok: true, saved: false });
+        const formKey = typeof b.form === "string" && b.form ? b.form : "default";
+        const form = Object.hasOwn(forms, formKey) ? forms[formKey] : null;
+        if (!form)
+            return json({ error: "Unknown form." }, 400);
+        const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+        const extras = Object.entries(form.extras ?? {})
+            .map(([field, label]) => [label, str(b[field], 300)])
+            .filter(([, value]) => value);
+        const text = str(b.message, LEAD_MESSAGE_MAX);
+        const message = [...extras.map(([label, value]) => `${label}: ${value}`), ...(extras.length && text ? ["---"] : []), ...(text ? [text] : [])].join("\n");
+        const key = typeof opts.key === "function" ? opts.key(req, b) : opts.key;
+        const base = (opts.apiUrl ?? process.env.QVIKS_API_URL)?.replace(/\/+$/, "");
+        if (!key || !base) {
+            console.error(`[qviks-lead] ${!key ? "no key" : "QVIKS_API_URL is not set"}; lead not sent`);
+            return json({ error: "Could not send. Please try again." }, 502);
+        }
+        const payload = {
+            name: str(b.name, 120),
+            email: str(b.email, 200),
+            ...(message ? { message } : {}),
+            ...(form.source ? { source: form.source } : {}),
+            ...(form.topic ? { topic: form.topic } : {}),
+            ...(form.tags?.length ? { tags: form.tags } : {}),
+        };
+        try {
+            const res = await fetch(`${base}/api/v1/leads`, {
+                method: "POST",
+                signal: AbortSignal.timeout(QVIKS_TIMEOUT_MS),
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    // Opted out of tracking: the lead is not tied to past visits either.
+                    ...visitorHeaders({ ...visitorFrom(req), ...(hasNotrackCookie(req.headers.get("cookie")) ? { id: null } : {}) }),
+                    Authorization: `Bearer ${key}`,
+                },
+                body: JSON.stringify(payload),
+            });
+            const resText = await res.text();
+            let out;
+            try {
+                out = resText ? JSON.parse(resText) : {};
+            }
+            catch {
+                out = res.ok ? { ok: true } : { error: "Could not send. Please try again." };
+            }
+            if (!res.ok)
+                console.error(`[qviks-lead] not saved: ${res.status} ${resText}`);
+            return json(out, res.status);
+        }
+        catch (err) {
+            console.error("[qviks-lead] failed:", err instanceof Error ? err.message : err);
+            return json({ error: "Could not send. Please try again." }, 502);
+        }
+    };
+}
