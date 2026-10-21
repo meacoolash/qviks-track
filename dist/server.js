@@ -269,6 +269,7 @@ export function createLeadHandler(opts) {
             console.error(`[qviks-lead] ${!key ? "no key" : "QVIKS_API_URL is not set"}; lead not sent`);
             return json({ error: "Could not send. Please try again." }, 502);
         }
+        const locale = b.locale === "sk" || b.locale === "cs" || b.locale === "en" ? b.locale : opts.locale;
         const payload = {
             name: str(b.name, 120),
             email: str(b.email, 200),
@@ -276,6 +277,7 @@ export function createLeadHandler(opts) {
             ...(form.source ? { source: form.source } : {}),
             ...(form.topic ? { topic: form.topic } : {}),
             ...(form.tags?.length ? { tags: form.tags } : {}),
+            ...(locale ? { locale } : {}),
         };
         try {
             const res = await fetch(`${base}/api/v1/leads`, {

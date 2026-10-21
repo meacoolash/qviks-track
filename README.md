@@ -63,6 +63,7 @@ import { createLeadHandler } from "@qviks/track/server";
 export const POST = createLeadHandler({
   key: process.env.QVIKS_API_KEY,
   forms: { default: { topic: "mysite.com", tags: ["Web Form"], source: "lead_form" } },
+  locale: "sk", // owner's notification email in Slovak ("sk" | "cs" | "en", default English)
 });
 
 // the form (client component): own markup, named fields name / email / message (+ form extras)

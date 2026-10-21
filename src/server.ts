@@ -270,6 +270,11 @@ export type LeadHandlerOptions = {
    * A post without `form` uses "default"; an unknown `form` is rejected.
    */
   forms?: Record<string, LeadForm>;
+  /**
+   * Language of the site; Qviks mails the owner in it ("sk", "cs", "en").
+   * A form may post its own `locale` (multi-language sites). Omit = English.
+   */
+  locale?: "sk" | "cs" | "en";
 };
 
 export type LeadForm = {
@@ -341,6 +346,7 @@ export function createLeadHandler(opts: LeadHandlerOptions) {
       return json({ error: "Could not send. Please try again." }, 502);
     }
 
+    const locale = b.locale === "sk" || b.locale === "cs" || b.locale === "en" ? b.locale : opts.locale;
     const payload = {
       name: str(b.name, 120),
       email: str(b.email, 200),
@@ -348,6 +354,7 @@ export function createLeadHandler(opts: LeadHandlerOptions) {
       ...(form.source ? { source: form.source } : {}),
       ...(form.topic ? { topic: form.topic } : {}),
       ...(form.tags?.length ? { tags: form.tags } : {}),
+      ...(locale ? { locale } : {}),
     };
 
     try {

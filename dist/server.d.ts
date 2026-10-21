@@ -82,6 +82,11 @@ export type LeadHandlerOptions = {
      * A post without `form` uses "default"; an unknown `form` is rejected.
      */
     forms?: Record<string, LeadForm>;
+    /**
+     * Language of the site; Qviks mails the owner in it ("sk", "cs", "en").
+     * A form may post its own `locale` (multi-language sites). Omit = English.
+     */
+    locale?: "sk" | "cs" | "en";
 };
 export type LeadForm = {
     /** Shown in the Qviks notification subject ("Website inquiry", "domskolak.sk"). Max 60 chars. */
