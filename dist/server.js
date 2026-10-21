@@ -1,5 +1,5 @@
-import { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
-export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, VISITOR_COOKIE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
+import { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, hasNotrackCookie, testHeaders, visitorIdFromCookie } from "./cookie.js";
+export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, TEST_HEADER, VISITOR_COOKIE, hasNotrackCookie, testHeaders, visitorIdFromCookie } from "./cookie.js";
 /*
  * Server side for a site that tracks into Qviks. Plain Web Request/Response,
  * so it works in route handlers and in middleware/proxy alike.
@@ -287,6 +287,8 @@ export function createLeadHandler(opts) {
                     "Content-Type": "application/json",
                     // Opted out of tracking: the lead is not tied to past visits either.
                     ...visitorHeaders({ ...visitorFrom(req), ...(hasNotrackCookie(req.headers.get("cookie")) ? { id: null } : {}) }),
+                    // Tester mode: Qviks files the lead as a test, the site's admin never sees it.
+                    ...testHeaders(req.headers.get("cookie")),
                     Authorization: `Bearer ${key}`,
                 },
                 body: JSON.stringify(payload),

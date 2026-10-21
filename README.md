@@ -20,6 +20,9 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
   fields are decided on the server, never by the browser.
 - **Owner opt-out**: one switch at [www.qviks.com/notrack](https://www.qviks.com/notrack) sets a cookie
   on every domain we track (each domain serves `/api/notrack`). A green dot top left shows it.
+- **Tester mode** (1.3.0): the same switch. With it on, `createLeadHandler` adds `x-qviks-test: 1`
+  (`testHeaders(cookie)` for sites with their own lead relay) and Qviks files the lead in Miki's
+  tests org: the site's admin gets no email, no bell and no new lead.
 
 No secrets live here: keys come from each project's environment.
 

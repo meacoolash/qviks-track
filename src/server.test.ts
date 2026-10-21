@@ -186,6 +186,7 @@ describe("createLeadHandler", () => {
     expect(h.Authorization).toBe("Bearer k1");
     expect(h["x-qviks-visitor-id"]).toBe("abcdef12-3456");
     expect(h["x-qviks-visitor-ip"]).toBe("1.2.3.4");
+    expect(h["x-qviks-test"]).toBeUndefined();
     expect(JSON.parse(String(seen!.init.body))).toEqual({
       name: "Jana",
       email: "j@x.sk",
@@ -204,7 +205,7 @@ describe("createLeadHandler", () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it("does not tie the lead to visits when tracking is off", async () => {
+  it("tester mode: no visit link and the lead is flagged as a test", async () => {
     let h: Record<string, string> = {};
     globalThis.fetch = mock(async (_u: string, init: RequestInit) => {
       h = init.headers as Record<string, string>;
@@ -217,6 +218,7 @@ describe("createLeadHandler", () => {
     });
     expect((await POST(req)).status).toBe(201);
     expect(h["x-qviks-visitor-id"]).toBeUndefined();
+    expect(h["x-qviks-test"]).toBe("1");
   });
 
   it("rejects an unknown form and passes Qviks errors through", async () => {

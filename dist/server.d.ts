@@ -1,4 +1,4 @@
-export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, VISITOR_COOKIE, hasNotrackCookie, visitorIdFromCookie } from "./cookie.js";
+export { HUB_ORIGIN, HUB_URL, NOTRACK_COOKIE, NOTRACK_MAX_AGE, TEST_HEADER, VISITOR_COOKIE, hasNotrackCookie, testHeaders, visitorIdFromCookie } from "./cookie.js";
 /** localhost, 127.0.0.1, LAN and *.vercel.app previews: no chain through production, no Domain on cookies. */
 export declare function isPreviewHost(host: string): boolean;
 /** The domain a cookie set on `host` should cover: qviks.com for *.qviks.com, else host minus www. */
