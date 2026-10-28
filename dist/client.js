@@ -73,6 +73,8 @@ function sendTrack(payload) {
  */
 export function useTrack(site) {
     const pathname = usePathname();
+    // Before the opt-out check: the owner clicks through his portfolio too.
+    useEffect(showBackButton, []);
     useEffect(() => {
         // Owner opt-out: the relay drops these beacons anyway, skipping saves the
         // requests. ?notrack=1|0 is handled server-side (notrackRedirect).
@@ -172,6 +174,77 @@ export function useTrack(site) {
             return cleanup;
         }
     }, [pathname, site]);
+}
+// ─── Back button ────────────────────────────────────────────────────────────
+// Portfolio links on our own sites end with ?from=<key> (or ?from=<key>/<lang>).
+// The visitor then sees a red "back" button on every page of this site for the
+// rest of the tab session. Only the keys below are accepted (no open redirect).
+const BACK_TARGETS = {
+    mikistec: { url: "https://mikistec.com", label: "mikistec.com" },
+};
+const BACK_STORAGE = "qviks-back";
+const BACK_ID = "qviks-back";
+function backHref(from) {
+    const [key, lang] = from.split("/");
+    const target = BACK_TARGETS[key];
+    if (!target)
+        return null;
+    // Local testing: came from localhost, go back there.
+    let origin = target.url;
+    try {
+        const ref = new URL(document.referrer);
+        if (ref.hostname === "localhost")
+            origin = ref.origin;
+    }
+    catch {
+        // no referrer
+    }
+    const path = lang && /^[a-z]{2}$/.test(lang) ? `/${lang}` : "";
+    return `${origin}${path}#work`;
+}
+function showBackButton() {
+    if (document.getElementById(BACK_ID))
+        return;
+    let from = new URLSearchParams(window.location.search).get("from");
+    try {
+        if (from && backHref(from))
+            sessionStorage.setItem(BACK_STORAGE, from);
+        else
+            from = sessionStorage.getItem(BACK_STORAGE);
+    }
+    catch {
+        // sessionStorage blocked: show it only on the landing page
+    }
+    if (!from)
+        return;
+    const href = backHref(from);
+    const target = BACK_TARGETS[from.split("/")[0]];
+    if (!href || !target)
+        return;
+    // The visitor's language on the site they came from (html lang is unreliable here).
+    const lang = from.split("/")[1];
+    const word = lang === "sk" ? "Späť na" : lang === "cs" ? "Zpět na" : "Back to";
+    const a = document.createElement("a");
+    a.id = BACK_ID;
+    a.href = href;
+    a.textContent = `← ${word} ${target.label}`;
+    // Inline styles: no Tailwind scan of node_modules.
+    Object.assign(a.style, {
+        position: "fixed",
+        // Bottom left: the top is every site's header, bottom right its chat buttons.
+        bottom: "16px",
+        left: "16px",
+        zIndex: "2147483646",
+        padding: "10px 18px",
+        borderRadius: "9999px",
+        background: "#dc2626",
+        color: "#fff",
+        font: "600 15px/1.2 system-ui, -apple-system, sans-serif",
+        textDecoration: "none",
+        whiteSpace: "nowrap",
+        boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+    });
+    document.body.appendChild(a);
 }
 // ─── Clicks ─────────────────────────────────────────────────────────────────
 // Clicks on links and buttons only (never empty space, never what was typed),

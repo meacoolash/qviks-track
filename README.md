@@ -24,6 +24,11 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
   (`testHeaders(cookie)` for sites with their own lead relay) and Qviks files the lead in Miki's
   tests org: the site's admin gets no email, no bell and no new lead.
 
+- **Back button** (1.5.0): a link to one of our sites with `?from=mikistec/<lang>` (mikistec portfolio) makes
+  `useTrack` show a red "← Späť na / Back to mikistec.com" button, bottom left, on every page of that site for
+  the rest of the tab session. It leads to `mikistec.com/<lang>#work`. Only keys in `BACK_TARGETS` are accepted.
+  No consumer code needed, only the version bump.
+
 No secrets live here: keys come from each project's environment.
 
 ## Install
