@@ -26,7 +26,8 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
 
 - **Back button** (1.5.0): a link to one of our sites with `?from=mikistec/<lang>` (mikistec portfolio) makes
   `useTrack` show a red "← Späť na / Back to mikistec.com" button, bottom left, on every page of that site for
-  the rest of the tab session. It leads to `mikistec.com/<lang>#work`. Only keys in `BACK_TARGETS` are accepted.
+  the rest of the tab session. Entering the site again without `?from=` and not from its own pages
+  (typed URL, bookmark, search) removes it (1.5.1). It leads to `mikistec.com/<lang>#work`. Only keys in `BACK_TARGETS` are accepted.
   No consumer code needed, only the version bump.
 
 No secrets live here: keys come from each project's environment.

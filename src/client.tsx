@@ -202,12 +202,25 @@ function backHref(from: string): string | null {
   return `${origin}${path}#work`;
 }
 
+// Runs once per full page load, so the referrer is the page before this load.
+function sameOriginReferrer(): boolean {
+  try {
+    return new URL(document.referrer).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 function showBackButton() {
   if (document.getElementById(BACK_ID)) return;
   let from = new URLSearchParams(window.location.search).get("from");
   try {
     if (from && backHref(from)) sessionStorage.setItem(BACK_STORAGE, from);
-    else from = sessionStorage.getItem(BACK_STORAGE);
+    else if (!sameOriginReferrer()) {
+      // Fresh entry (typed URL, bookmark, search): the portfolio visit is over.
+      sessionStorage.removeItem(BACK_STORAGE);
+      from = null;
+    } else from = sessionStorage.getItem(BACK_STORAGE);
   } catch {
     // sessionStorage blocked: show it only on the landing page
   }

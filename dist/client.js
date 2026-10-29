@@ -202,6 +202,15 @@ function backHref(from) {
     const path = lang && /^[a-z]{2}$/.test(lang) ? `/${lang}` : "";
     return `${origin}${path}#work`;
 }
+// Runs once per full page load, so the referrer is the page before this load.
+function sameOriginReferrer() {
+    try {
+        return new URL(document.referrer).origin === window.location.origin;
+    }
+    catch {
+        return false;
+    }
+}
 function showBackButton() {
     if (document.getElementById(BACK_ID))
         return;
@@ -209,6 +218,11 @@ function showBackButton() {
     try {
         if (from && backHref(from))
             sessionStorage.setItem(BACK_STORAGE, from);
+        else if (!sameOriginReferrer()) {
+            // Fresh entry (typed URL, bookmark, search): the portfolio visit is over.
+            sessionStorage.removeItem(BACK_STORAGE);
+            from = null;
+        }
         else
             from = sessionStorage.getItem(BACK_STORAGE);
     }
