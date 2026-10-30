@@ -29,6 +29,8 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
   the rest of the tab session. Entering the site again without `?from=` and not from its own pages
   (typed URL, bookmark, search) removes it (1.5.1). It leads to `mikistec.com/<lang>#work`. Only keys in `BACK_TARGETS` are accepted.
   No consumer code needed, only the version bump.
+  1.6.0: `?from=mikistec/<lang>/<page>` returns to `mikistec.com/<lang>/<page>` instead (page = `[a-z0-9-]+`),
+  and `useBackButton()` gives the button alone to sites that track nothing (e.g. maxkocak.com).
 
 No secrets live here: keys come from each project's environment.
 
@@ -87,7 +89,7 @@ Custom events: `trackEvent("mysite", "cta_click", { target: "whatsapp" })`.
 
 | Path | |
 |---|---|
-| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `trackEvent`, `NotrackDot`, `useLeadForm`, `LeadHoneypot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
+| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `useBackButton`, `trackEvent`, `NotrackDot`, `useLeadForm`, `LeadHoneypot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
 | `@qviks/track/server` | `createTrackHandler`, `createLeadHandler`, `createNotrackHandler`, `notrackRedirect`, `linkRedirect`, `cookieDomain`, `isPreviewHost`, `visitorFrom` |
 | `@qviks/track/cookie` | `NOTRACK_COOKIE`, `HUB_URL`, `hasNotrackCookie`, `VISITOR_COOKIE`, `visitorIdFromCookie` (safe anywhere) |
 
