@@ -65,6 +65,13 @@ function sendTrack(payload) {
     }).catch(() => { });
 }
 /**
+ * Only the red "back" button, for sites that track nothing (e.g. a child's static page).
+ * useTrack already includes it.
+ */
+export function useBackButton() {
+    useEffect(showBackButton, []);
+}
+/**
  * Tracks pageviews (+ one `engaged` per page) of the page/layout it is in.
  * @param site  Analytics surface name stored in Qviks ("mikistec", "joymeseci", ...).
  *
@@ -176,7 +183,8 @@ export function useTrack(site) {
     }, [pathname, site]);
 }
 // ─── Back button ────────────────────────────────────────────────────────────
-// Portfolio links on our own sites end with ?from=<key> (or ?from=<key>/<lang>).
+// Portfolio links on our own sites end with ?from=<key> (or ?from=<key>/<lang>, or
+// ?from=<key>/<lang>/<page> to return to that page instead of the portfolio).
 // The visitor then sees a red "back" button on every page of this site for the
 // rest of the tab session. Only the keys below are accepted (no open redirect).
 const BACK_TARGETS = {
@@ -185,7 +193,7 @@ const BACK_TARGETS = {
 const BACK_STORAGE = "qviks-back";
 const BACK_ID = "qviks-back";
 function backHref(from) {
-    const [key, lang] = from.split("/");
+    const [key, lang, page] = from.split("/");
     const target = BACK_TARGETS[key];
     if (!target)
         return null;
@@ -200,6 +208,9 @@ function backHref(from) {
         // no referrer
     }
     const path = lang && /^[a-z]{2}$/.test(lang) ? `/${lang}` : "";
+    // A page slug (letters, digits, dashes only) returns there; otherwise the portfolio.
+    if (page && /^[a-z0-9-]+$/.test(page))
+        return `${origin}${path}/${page}`;
     return `${origin}${path}#work`;
 }
 // Runs once per full page load, so the referrer is the page before this load.

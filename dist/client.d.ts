@@ -1,6 +1,11 @@
 export { HUB_URL, hasNotrackCookie } from "./cookie.js";
 export declare function getOrCreateVisitorId(): string;
 /**
+ * Only the red "back" button, for sites that track nothing (e.g. a child's static page).
+ * useTrack already includes it.
+ */
+export declare function useBackButton(): void;
+/**
  * Tracks pageviews (+ one `engaged` per page) of the page/layout it is in.
  * @param site  Analytics surface name stored in Qviks ("mikistec", "joymeseci", ...).
  *
