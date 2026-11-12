@@ -355,6 +355,8 @@ export function createLeadHandler(opts: LeadHandlerOptions) {
       ...(form.topic ? { topic: form.topic } : {}),
       ...(form.tags?.length ? { tags: form.tags } : {}),
       ...(locale ? { locale } : {}),
+      // Lead from the @qviks/chat card (1.7.0): Qviks links the chat to the contact and mails the conversation.
+      ...(typeof b.chat_session_id === "string" && /^[\w-]{8,64}$/.test(b.chat_session_id) ? { chat_session_id: b.chat_session_id } : {}),
     };
 
     try {

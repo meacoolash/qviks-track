@@ -17,7 +17,8 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
 - **Contact forms**: `useLeadForm()` posts any form to the site's own `/api/lead`;
   `createLeadHandler` checks origin + honeypot, whitelists the form, and forwards to Qviks
   `/api/v1/leads` with the visitor id, so the lead shows on its visits. Topic, tags and extra
-  fields are decided on the server, never by the browser.
+  fields are decided on the server, never by the browser. A `chat_session_id` from the `@qviks/chat` lead card is
+  passed through (1.7.0), so Qviks links that chat to the contact.
 - **Owner opt-out**: one switch at [www.qviks.com/notrack](https://www.qviks.com/notrack) sets a cookie
   on every domain we track (each domain serves `/api/notrack`). A green dot top left shows it.
 - **Tester mode** (1.3.0): the same switch. With it on, `createLeadHandler` adds `x-qviks-test: 1`

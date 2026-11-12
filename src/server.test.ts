@@ -197,6 +197,18 @@ describe("createLeadHandler", () => {
     });
   });
 
+  it("forwards a valid chat_session_id (chat lead card), drops a malformed one", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    globalThis.fetch = mock(async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true }, { status: 201 });
+    }) as unknown as typeof fetch;
+    await POST(post({ name: "a", email: "a@b.cz", message: "?", chat_session_id: "0b6c1d2e-aaaa-bbbb" }));
+    await POST(post({ name: "a", email: "a@b.cz", message: "?", chat_session_id: "bad id; drop" }));
+    expect(bodies[0].chat_session_id).toBe("0b6c1d2e-aaaa-bbbb");
+    expect(bodies[1].chat_session_id).toBeUndefined();
+  });
+
   it("silently acks a foreign origin and a filled honeypot without calling Qviks", async () => {
     const f = mock(async () => Response.json({}));
     globalThis.fetch = f as unknown as typeof fetch;
