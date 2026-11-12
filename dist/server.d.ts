@@ -71,8 +71,26 @@ export declare function notrackRedirect(req: Request): Response | null;
  * Returns null for any other path.
  */
 export declare function linkRedirect(req: Request): Response | null;
+export type TurnstileKeys = {
+    siteKey: string;
+    secret: string;
+};
+export type LeadPayload = Record<string, unknown>;
+export type LeadContext = {
+    req: Request;
+    /** The browser's JSON body (without `turnstile` and `elapsedMs`). */
+    body: Record<string, unknown>;
+    /** The `form` key the browser posted ("default" when none). */
+    formKey: string;
+    form: LeadForm;
+    /** Language: the body's `locale` (sk/cs/en) or the handler's `locale`. */
+    locale: string | undefined;
+};
 export type LeadHandlerOptions = {
-    /** Qviks API v1 key of the site's org. A function when one app serves many orgs: null = 404. */
+    /**
+     * Qviks API v1 key of the site's org. A function when one app serves many orgs:
+     * null = 404 { error: "Not found" } (no such site), undefined / "" = 502 (key not configured).
+     */
     key: string | undefined | ((req: Request, body: Record<string, unknown>) => string | null | undefined);
     /** Qviks base URL. Default: process.env.QVIKS_API_URL. */
     apiUrl?: string;
@@ -85,8 +103,44 @@ export type LeadHandlerOptions = {
     /**
      * Language of the site; Qviks mails the owner in it ("sk", "cs", "en").
      * A form may post its own `locale` (multi-language sites). Omit = English.
+     * A function for apps serving many sites.
      */
-    locale?: "sk" | "cs" | "en";
+    locale?: "sk" | "cs" | "en" | ((req: Request, body: Record<string, unknown>) => string | undefined);
+    /**
+     * Invisible Cloudflare Turnstile (1.8.0), the site's own widget keys (server env, never NEXT_PUBLIC_).
+     * Set = required for every caller: no or bad token -> 400 { error: "turnstile", turnstile: siteKey }
+     * (useLeadForm / postLead fetch a token and resend once). A function for per-site keys.
+     * Keys that resolve to nothing: production fails closed (400, logged), outside production the
+     * check is skipped (local dev without keys). Omit only on forms that are not public.
+     */
+    turnstile?: TurnstileKeys | null | undefined | ((req: Request, body: Record<string, unknown>) => TurnstileKeys | null | undefined);
+    /**
+     * Minimum time between page load (or form mount) and submit, from the browser's `elapsedMs`
+     * (1.8.0). Faster or missing = the honeypot's silent { ok: true, saved: false }. Standard: 3000.
+     * Default 0 (off) for compatibility.
+     */
+    minFillMs?: number;
+    /**
+     * First thing, before the body is read (1.8.0): own origin rules, rate limits. Return a
+     * Response to answer with it, null to go on. The handler's same-origin check runs after it.
+     */
+    guard?: (req: Request) => Response | null | Promise<Response | null>;
+    /**
+     * Builds the Qviks payload after all bot gates passed (1.8.0). Return a Response to answer
+     * the browser directly (validation error, a booking done elsewhere, mail-only form).
+     * Default: name, email, phone, message (+ form extras), source, topic, tags, locale, chat_session_id.
+     */
+    prepare?: (ctx: LeadContext) => LeadPayload | Response | Promise<LeadPayload | Response>;
+    /**
+     * After Qviks answered, or failed to (502), with that status and JSON (1.8.0). Return a
+     * Response to replace the answer (e.g. mail the lead yourself when Qviks is down), or
+     * nothing to pass Qviks' answer through. Lost-lead alerts go here.
+     */
+    onResult?: (ctx: LeadContext & {
+        payload: LeadPayload;
+        status: number;
+        data: unknown;
+    }) => Response | void | Promise<Response | void>;
 };
 export type LeadForm = {
     /** Shown in the Qviks notification subject ("Website inquiry", "domskolak.sk"). Max 60 chars. */
@@ -102,13 +156,20 @@ export type LeadForm = {
     /** Extra fields (name -> label) folded into the message as "Label: value" lines, 300 chars each. */
     extras?: Record<string, string>;
 };
+/** Cloudflare Turnstile siteverify; false on any failure (fails closed). */
+export declare function verifyTurnstile(secret: string, token: unknown, ip?: string | null): Promise<boolean>;
+/** A chat id from the @qviks/chat lead card, or undefined. */
+export declare function chatSessionId(v: unknown): string | undefined;
+/** The default Qviks payload: what createLeadHandler sends without `prepare`. */
+export declare function defaultLeadPayload({ body: b, form, locale }: LeadContext): LeadPayload;
 /**
  * Same-origin relay for contact forms: browser form -> Qviks POST /api/v1/leads
  * with the key and the visitor headers (ties the lead to its visits). Pair it
- * with useLeadForm() from @qviks/track. Guards here: body size, same-origin
- * (foreign posts get a silent 201, bots don't learn the gate), honeypot
- * `hp_url`, form whitelist. Qviks does the rest (validation, 5/min per visitor
- * IP, contact + notification). Qviks status and JSON pass through unchanged;
- * 502 { error } when it is unreachable or the key / URL is missing.
+ * with useLeadForm() / postLead() from @qviks/track. Gates, in order: body size,
+ * `guard`, same-origin (foreign posts get a silent 201, bots don't learn the gate),
+ * honeypot `hp_url`, `minFillMs`, Turnstile, form whitelist. Qviks does the rest
+ * (validation, 5/min per visitor IP, contact + notification). Qviks status and JSON
+ * pass through unchanged (errors reach the visitor); 502 { error } when it is
+ * unreachable or the URL / key is missing, 404 when a key function returns null.
  */
 export declare function createLeadHandler(opts: LeadHandlerOptions): (req: Request) => Promise<Response>;

@@ -218,14 +218,62 @@ export function linkRedirect(req) {
 }
 // Qviks keeps the first 1000 characters of a message.
 const LEAD_MESSAGE_MAX = 1000;
+const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+/** Cloudflare Turnstile siteverify; false on any failure (fails closed). */
+export async function verifyTurnstile(secret, token, ip) {
+    if (typeof token !== "string" || !token || token.length > 4096)
+        return false;
+    const form = new FormData();
+    form.append("secret", secret);
+    form.append("response", token);
+    if (ip)
+        form.append("remoteip", ip);
+    try {
+        const res = await fetch(SITEVERIFY, { method: "POST", body: form, signal: AbortSignal.timeout(QVIKS_TIMEOUT_MS) });
+        const data = (await res.json());
+        return data.success === true;
+    }
+    catch {
+        return false;
+    }
+}
+/** A chat id from the @qviks/chat lead card, or undefined. */
+export function chatSessionId(v) {
+    return typeof v === "string" && /^[\w-]{8,64}$/.test(v) ? v : undefined;
+}
+const leadStr = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+/** The default Qviks payload: what createLeadHandler sends without `prepare`. */
+export function defaultLeadPayload({ body: b, form, locale }) {
+    const extras = Object.entries(form.extras ?? {})
+        .map(([field, label]) => [label, leadStr(b[field], 300)])
+        .filter(([, value]) => value);
+    const text = leadStr(b.message, LEAD_MESSAGE_MAX);
+    const message = [...extras.map(([label, value]) => `${label}: ${value}`), ...(extras.length && text ? ["---"] : []), ...(text ? [text] : [])].join("\n");
+    const phone = leadStr(typeof b.phone === "string" ? b.phone.replace(/[\u0000-\u001f\u007f]+/g, " ") : "", 40);
+    const chat = chatSessionId(b.chat_session_id);
+    return {
+        name: leadStr(b.name, 120),
+        email: leadStr(b.email, 200),
+        ...(phone ? { phone } : {}),
+        ...(message ? { message } : {}),
+        ...(form.source ? { source: form.source } : {}),
+        ...(form.topic ? { topic: form.topic } : {}),
+        ...(form.tags?.length ? { tags: form.tags } : {}),
+        ...(locale ? { locale } : {}),
+        // Lead from the @qviks/chat card (1.7.0): Qviks links the chat to the contact and mails the conversation.
+        ...(chat ? { chat_session_id: chat } : {}),
+    };
+}
+const isProd = () => process.env.NODE_ENV === "production";
 /**
  * Same-origin relay for contact forms: browser form -> Qviks POST /api/v1/leads
  * with the key and the visitor headers (ties the lead to its visits). Pair it
- * with useLeadForm() from @qviks/track. Guards here: body size, same-origin
- * (foreign posts get a silent 201, bots don't learn the gate), honeypot
- * `hp_url`, form whitelist. Qviks does the rest (validation, 5/min per visitor
- * IP, contact + notification). Qviks status and JSON pass through unchanged;
- * 502 { error } when it is unreachable or the key / URL is missing.
+ * with useLeadForm() / postLead() from @qviks/track. Gates, in order: body size,
+ * `guard`, same-origin (foreign posts get a silent 201, bots don't learn the gate),
+ * honeypot `hp_url`, `minFillMs`, Turnstile, form whitelist. Qviks does the rest
+ * (validation, 5/min per visitor IP, contact + notification). Qviks status and JSON
+ * pass through unchanged (errors reach the visitor); 502 { error } when it is
+ * unreachable or the URL / key is missing, 404 when a key function returns null.
  */
 export function createLeadHandler(opts) {
     const forms = opts.forms ?? { default: {} };
@@ -233,6 +281,11 @@ export function createLeadHandler(opts) {
         const len = Number(req.headers.get("content-length") || 0);
         if (len > 16_384)
             return json({ error: "Invalid request" }, 413);
+        if (opts.guard) {
+            const stop = await opts.guard(req);
+            if (stop)
+                return stop;
+        }
         const host = hostOf(req);
         let originHost = null;
         try {
@@ -241,48 +294,62 @@ export function createLeadHandler(opts) {
         catch { }
         if (originHost !== host)
             return json({ ok: true }, 201);
-        let body;
+        let raw;
         try {
-            body = await req.json();
+            raw = await req.json();
         }
         catch {
             return json({ error: "Invalid request" }, 400);
         }
-        if (!body || typeof body !== "object" || Array.isArray(body))
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
             return json({ error: "Invalid request" }, 400);
-        const b = body;
+        const { turnstile: token, elapsedMs, ...b } = raw;
+        const fakeSuccess = () => json({ ok: true, saved: false });
         if (typeof b.hp_url === "string" && b.hp_url.trim() !== "")
-            return json({ ok: true, saved: false });
+            return fakeSuccess();
+        const minFill = opts.minFillMs ?? 0;
+        if (minFill > 0 && !(typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= minFill))
+            return fakeSuccess();
+        if (opts.turnstile !== undefined) {
+            const keys = typeof opts.turnstile === "function" ? opts.turnstile(req, b) : opts.turnstile;
+            const noStore = { "Cache-Control": "no-store" };
+            if (!keys?.siteKey || !keys.secret) {
+                if (isProd()) {
+                    console.error(`[qviks-lead] Turnstile keys missing in production (${host}): form blocked`);
+                    return Response.json({ error: "turnstile" }, { status: 400, headers: noStore });
+                }
+            }
+            else if (!(await verifyTurnstile(keys.secret, token, visitorFrom(req).ip))) {
+                // The site key rides along (no NEXT_PUBLIC_ env); the browser gets a token and resends.
+                return Response.json({ error: "turnstile", turnstile: keys.siteKey }, { status: 400, headers: noStore });
+            }
+        }
         const formKey = typeof b.form === "string" && b.form ? b.form : "default";
         const form = Object.hasOwn(forms, formKey) ? forms[formKey] : null;
         if (!form)
             return json({ error: "Unknown form." }, 400);
-        const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
-        const extras = Object.entries(form.extras ?? {})
-            .map(([field, label]) => [label, str(b[field], 300)])
-            .filter(([, value]) => value);
-        const text = str(b.message, LEAD_MESSAGE_MAX);
-        const message = [...extras.map(([label, value]) => `${label}: ${value}`), ...(extras.length && text ? ["---"] : []), ...(text ? [text] : [])].join("\n");
+        const rawLocale = typeof opts.locale === "function" ? opts.locale(req, b) : opts.locale;
+        const locale = b.locale === "sk" || b.locale === "cs" || b.locale === "en" ? b.locale : rawLocale;
+        const ctx = { req, body: b, formKey, form, locale };
+        const prepared = opts.prepare ? await opts.prepare(ctx) : defaultLeadPayload(ctx);
+        if (prepared instanceof Response)
+            return prepared;
+        const payload = prepared;
+        const finish = async (status, data) => {
+            const replaced = opts.onResult ? await opts.onResult({ ...ctx, payload, status, data }) : undefined;
+            return replaced ?? json(data, status);
+        };
         const key = typeof opts.key === "function" ? opts.key(req, b) : opts.key;
+        if (key === null)
+            return json({ error: "Not found" }, 404);
         const base = (opts.apiUrl ?? process.env.QVIKS_API_URL)?.replace(/\/+$/, "");
         if (!key || !base) {
             console.error(`[qviks-lead] ${!key ? "no key" : "QVIKS_API_URL is not set"}; lead not sent`);
-            return json({ error: "Could not send. Please try again." }, 502);
+            return finish(502, { error: "Could not send. Please try again." });
         }
-        const locale = b.locale === "sk" || b.locale === "cs" || b.locale === "en" ? b.locale : opts.locale;
-        const payload = {
-            name: str(b.name, 120),
-            email: str(b.email, 200),
-            ...(message ? { message } : {}),
-            ...(form.source ? { source: form.source } : {}),
-            ...(form.topic ? { topic: form.topic } : {}),
-            ...(form.tags?.length ? { tags: form.tags } : {}),
-            ...(locale ? { locale } : {}),
-            // Lead from the @qviks/chat card (1.7.0): Qviks links the chat to the contact and mails the conversation.
-            ...(typeof b.chat_session_id === "string" && /^[\w-]{8,64}$/.test(b.chat_session_id) ? { chat_session_id: b.chat_session_id } : {}),
-        };
+        let res;
         try {
-            const res = await fetch(`${base}/api/v1/leads`, {
+            res = await fetch(`${base}/api/v1/leads`, {
                 method: "POST",
                 signal: AbortSignal.timeout(QVIKS_TIMEOUT_MS),
                 cache: "no-store",
@@ -297,21 +364,21 @@ export function createLeadHandler(opts) {
                 },
                 body: JSON.stringify(payload),
             });
-            const resText = await res.text();
-            let out;
-            try {
-                out = resText ? JSON.parse(resText) : {};
-            }
-            catch {
-                out = res.ok ? { ok: true } : { error: "Could not send. Please try again." };
-            }
-            if (!res.ok)
-                console.error(`[qviks-lead] not saved: ${res.status} ${resText}`);
-            return json(out, res.status);
         }
         catch (err) {
             console.error("[qviks-lead] failed:", err instanceof Error ? err.message : err);
-            return json({ error: "Could not send. Please try again." }, 502);
+            return finish(502, { error: "Could not send. Please try again." });
         }
+        const resText = await res.text();
+        let out;
+        try {
+            out = resText ? JSON.parse(resText) : {};
+        }
+        catch {
+            out = res.ok ? { ok: true } : { error: "Could not send. Please try again." };
+        }
+        if (!res.ok)
+            console.error(`[qviks-lead] not saved: ${res.status} ${resText}`);
+        return finish(res.status, out);
     };
 }

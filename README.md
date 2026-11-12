@@ -14,10 +14,13 @@ Visit tracking and contact forms for our Next.js sites, stored in [Qviks](https:
   poster or person is just a new code. Qviks shows visits and leads per code.
 - **Lead -> visit**: the visitor id is mirrored into the `qviks_vid` cookie and forwarded with server calls
   (`visitorFrom`), so Qviks ties a form submission to the visits before it.
-- **Contact forms**: `useLeadForm()` posts any form to the site's own `/api/lead`;
+- **Contact forms**: `useLeadForm()` / `postLead()` post any form to the site's own `/api/lead`;
   `createLeadHandler` checks origin + honeypot, whitelists the form, and forwards to Qviks
   `/api/v1/leads` with the visitor id, so the lead shows on its visits. Topic, tags and extra
-  fields are decided on the server, never by the browser. A `chat_session_id` from the `@qviks/chat` lead card is
+  fields are decided on the server, never by the browser. 1.8.0: invisible Turnstile with per-site keys
+  (`turnstile`), minimum fill time (`minFillMs`, standard 3000), hooks `guard` (origin rules, rate limits),
+  `prepare` (own payload or a direct answer) and `onResult` (lost-lead alert, mail fallback), `phone`
+  forwarded, and every server error message reaches the visitor (useLeadForm shows it whatever the status). A `chat_session_id` from the `@qviks/chat` lead card is
   passed through (1.7.0), so Qviks links that chat to the contact.
 - **Owner opt-out**: one switch at [www.qviks.com/notrack](https://www.qviks.com/notrack) sets a cookie
   on every domain we track (each domain serves `/api/notrack`). A green dot top left shows it.
@@ -38,7 +41,7 @@ No secrets live here: keys come from each project's environment.
 ## Install
 
 ```sh
-bun add github:meacoolash/qviks-track#v1.2.0
+bun add github:meacoolash/qviks-track#v1.8.0
 ```
 
 Env (server only): `QVIKS_API_URL`, and the org key, e.g. `QVIKS_API_KEY`.
@@ -73,13 +76,24 @@ export const POST = createLeadHandler({
   key: process.env.QVIKS_API_KEY,
   forms: { default: { topic: "mysite.com", tags: ["Web Form"], source: "lead_form" } },
   locale: "sk", // owner's notification email in Slovak ("sk" | "cs" | "en", default English)
+  // Always on public forms (site standard). The site's OWN widget keys, server env only.
+  turnstile: { siteKey: process.env.TURNSTILE_SITE_KEY!, secret: process.env.TURNSTILE_SECRET_KEY! },
+  minFillMs: 3000,
 });
 
 // the form (client component): own markup, named fields name / email / message (+ form extras)
 import { useLeadForm, LeadHoneypot } from "@qviks/track";
-const { status, error, onSubmit } = useLeadForm();
+const { status, error, onSubmit } = useLeadForm({ fallbackError: "Nepodarilo sa odoslať." });
 <form onSubmit={onSubmit}>...<LeadHoneypot /></form>
+// own form state instead: const res = await postLead({ name, email, message, hp_url })
 ```
+
+Turnstile: without a token (or with a bad one) the handler answers 400 `{ error: "turnstile", turnstile: siteKey }`;
+`postLead` runs the invisible widget, caches the key and resends once. Keys that resolve to nothing fail closed in
+production and are skipped outside it. Local tests: Cloudflare always-pass keys `1x00000000000000000000AA` /
+`1x0000000000000000000000000000000AA`. A function `turnstile: (req, body) => keys | null` gives per-site keys,
+`key: (req, body) => ...` returning `null` answers 404 (apps serving many sites, e.g. `sites`).
+Gates run in this order: size, `guard`, same-origin (silent 201), honeypot, `minFillMs` (silent 200 saved:false), Turnstile, form whitelist.
 
 Then add the domain to the switch's chain in Qviks (`src/lib/notrack.ts`, `STANDALONE_ORIGINS`).
 Sites served by the `sites` app are covered automatically.
@@ -90,8 +104,8 @@ Custom events: `trackEvent("mysite", "cta_click", { target: "whatsapp" })`.
 
 | Path | |
 |---|---|
-| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `useBackButton`, `trackEvent`, `NotrackDot`, `useLeadForm`, `LeadHoneypot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
-| `@qviks/track/server` | `createTrackHandler`, `createLeadHandler`, `createNotrackHandler`, `notrackRedirect`, `linkRedirect`, `cookieDomain`, `isPreviewHost`, `visitorFrom` |
+| `@qviks/track` (client) | `QviksTracker`, `useTrack`, `useBackButton`, `trackEvent`, `NotrackDot`, `useLeadForm`, `postLead`, `getTurnstileToken`, `LeadHoneypot`, `getOrCreateVisitorId`, `hasNotrackCookie`, `HUB_URL` |
+| `@qviks/track/server` | `createTrackHandler`, `createLeadHandler`, `defaultLeadPayload`, `verifyTurnstile`, `chatSessionId`, `createNotrackHandler`, `notrackRedirect`, `linkRedirect`, `cookieDomain`, `isPreviewHost`, `visitorFrom` |
 | `@qviks/track/cookie` | `NOTRACK_COOKIE`, `HUB_URL`, `hasNotrackCookie`, `VISITOR_COOKIE`, `visitorIdFromCookie` (safe anywhere) |
 
 ## Develop

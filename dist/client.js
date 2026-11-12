@@ -363,52 +363,163 @@ export function QviksTracker({ site, dot = true }) {
 }
 /** Name of the hidden honeypot field; humans never fill it, bots do. */
 export const HONEYPOT_FIELD = "hp_url";
+const TURNSTILE_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+let turnstileLoading = null;
+function loadTurnstile() {
+    const w = window;
+    if (w.turnstile)
+        return Promise.resolve();
+    turnstileLoading ??= new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = TURNSTILE_SRC;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => {
+            turnstileLoading = null;
+            reject(new Error("turnstile script"));
+        };
+        document.head.appendChild(s);
+    });
+    return turnstileLoading;
+}
+/**
+ * Runs the invisible Cloudflare Turnstile widget once for `siteKey` and returns its
+ * token ("" on failure or after 15 s). Loads the script on first use only.
+ */
+export async function getTurnstileToken(siteKey) {
+    try {
+        await loadTurnstile();
+    }
+    catch {
+        return "";
+    }
+    const ts = window.turnstile;
+    if (!ts)
+        return "";
+    const el = document.createElement("div");
+    el.style.cssText = "position:fixed;left:-9999px;top:0";
+    document.body.appendChild(el);
+    return new Promise((resolve) => {
+        let id = "";
+        const done = (token) => {
+            clearTimeout(timer);
+            if (id)
+                ts.remove(id);
+            el.remove();
+            resolve(token);
+        };
+        const timer = setTimeout(() => done(""), 15_000);
+        id = ts.render(el, {
+            sitekey: siteKey,
+            callback: (token) => done(token),
+            "error-callback": () => done(""),
+            "expired-callback": () => done(""),
+        });
+    });
+}
+// Site key from the server's answer, kept per endpoint: only the first submit of a page view
+// costs the extra round trip.
+const turnstileKeys = new Map();
+const DEFAULT_HUMAN_ERROR = "We could not verify the form. Please refresh the page and try again.";
+/** The site key when the server asks for a Turnstile token (400 { error: "turnstile", turnstile } or 428 { turnstile }). */
+async function askedTurnstile(res) {
+    if (res.status !== 400 && res.status !== 428)
+        return null;
+    const data = (await res.clone().json().catch(() => null));
+    if (res.status === 428)
+        return typeof data?.turnstile === "string" ? data.turnstile : null;
+    return data?.error === "turnstile" ? data.turnstile || "" : null;
+}
+/**
+ * Drop-in for fetch(endpoint, { method: "POST", body: JSON.stringify(body) }) to a
+ * createLeadHandler route: adds `elapsedMs` (fill time) and an invisible Turnstile token
+ * when the server asks for one (its answer carries the site key, cached), with one retry
+ * on a failed or expired token. If the human check still fails, the Response is
+ * 400 { error: humanError }, so forms that show data.error stay readable.
+ */
+export async function postLead(body, opts = {}) {
+    const endpoint = opts.endpoint ?? "/api/lead";
+    // Ties the lead to the visits before it (cookie qviks_vid), unless tracking is off.
+    if (!hasNotrackCookie(document.cookie))
+        getOrCreateVisitorId();
+    const send = (turnstile) => fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, turnstile, elapsedMs: Math.round(performance.now() - (opts.startedAt ?? 0)) }),
+    });
+    const cached = turnstileKeys.get(endpoint);
+    let res = await send(cached ? await getTurnstileToken(cached) : undefined);
+    const key = await askedTurnstile(res);
+    if (key === null)
+        return res;
+    if (key) {
+        turnstileKeys.set(endpoint, key);
+        const token = await getTurnstileToken(key);
+        if (token) {
+            res = await send(token);
+            if ((await askedTurnstile(res)) === null)
+                return res;
+        }
+    }
+    return Response.json({ error: opts.humanError ?? DEFAULT_HUMAN_ERROR }, { status: 400 });
+}
 /**
  * Headless contact form: the site keeps its own markup and copy, this posts it.
- *   const { status, error, onSubmit } = useLeadForm();
+ *   const { status, error, onSubmit } = useLeadForm({ fallbackError: "..." });
  *   <form onSubmit={onSubmit}><input name="name" /><input name="email" type="email" />
  *     <textarea name="message" /><LeadHoneypot /><button disabled={status === "sending"}>...</button></form>
- * Every named field is sent as JSON to `endpoint` (createLeadHandler in
- * @qviks/track/server); `form` picks the server-side form entry. `error` is the
- * server's message or `fallbackError`. The form is reset after a successful send.
+ * Every named field is sent as JSON through postLead() (fill time from mount + Turnstile)
+ * to `endpoint` (createLeadHandler in @qviks/track/server); `form` picks the server-side
+ * form entry. `error` is the server's message whatever the status (never hidden),
+ * else `fallbackError`. `send(fields)` posts fields from a widget without a <form>.
+ * `data` is the last JSON answer.
  */
-export function useLeadForm({ endpoint = "/api/lead", form, fallbackError = "Could not send. Please try again.", } = {}) {
+export function useLeadForm({ endpoint = "/api/lead", form, fallbackError = "Could not send. Please try again.", offlineError, tooManyError, humanError, extra, resetOnSent = true, } = {}) {
     const [status, setStatus] = useState("idle");
     const [error, setError] = useState(null);
-    async function onSubmit(e) {
-        e.preventDefault();
-        const el = e.currentTarget;
-        const data = {};
-        new FormData(el).forEach((v, k) => {
-            if (typeof v === "string")
-                data[k] = v;
-        });
-        // Ties the lead to the visits before it (cookie qviks_vid), unless tracking is off.
-        if (!hasNotrackCookie(document.cookie))
-            getOrCreateVisitorId();
+    const [data, setData] = useState(null);
+    const [startedAt, setStartedAt] = useState(0);
+    useEffect(() => {
+        setStartedAt(performance.now());
+    }, []);
+    /** Posts any fields; returns the status + JSON answer, or null when the network failed or a send is running. */
+    async function send(fields) {
+        if (status === "sending")
+            return null;
         setStatus("sending");
         setError(null);
         try {
-            const res = await fetch(endpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(form ? { ...data, form } : data),
-            });
+            const res = await postLead({ ...fields, ...(extra ? extra() : {}), ...(form ? { form } : {}) }, { endpoint, startedAt, humanError });
+            const body = ((await res.json().catch(() => null)) ?? {});
+            setData(body);
             if (!res.ok) {
-                const body = (await res.json().catch(() => null));
-                setError(res.status === 400 && body?.error ? body.error : fallbackError);
+                const msg = typeof body.error === "string" && body.error && body.error !== "turnstile" ? body.error : "";
+                setError(res.status === 429 && tooManyError ? tooManyError : msg || fallbackError);
                 setStatus("error");
-                return;
             }
-            el.reset();
-            setStatus("sent");
+            else
+                setStatus("sent");
+            return { status: res.status, data: body };
         }
         catch {
-            setError(fallbackError);
+            setError(offlineError ?? fallbackError);
             setStatus("error");
+            return null;
         }
     }
-    return { status, error, onSubmit, reset: () => setStatus("idle") };
+    async function onSubmit(e) {
+        e.preventDefault();
+        const el = e.currentTarget;
+        const fields = {};
+        new FormData(el).forEach((v, k) => {
+            if (typeof v === "string")
+                fields[k] = v;
+        });
+        const r = await send(fields);
+        if (r && r.status < 300 && resetOnSent)
+            el.reset();
+    }
+    return { status, error, data, onSubmit, send, reset: () => setStatus("idle") };
 }
 /** The honeypot input, hidden from people and screen readers. Inline styles: no Tailwind scan of node_modules. */
 export function LeadHoneypot() {

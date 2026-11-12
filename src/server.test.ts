@@ -250,3 +250,111 @@ describe("createLeadHandler", () => {
     expect((await noKey(post({ name: "a", email: "a@b.cz" }))).status).toBe(502);
   });
 });
+
+describe("createLeadHandler 1.8.0 gates and hooks", () => {
+  const post = (body: unknown, headers: Record<string, string> = {}) =>
+    new Request("https://joymeseci.com/api/lead", {
+      method: "POST",
+      headers: { host: "joymeseci.com", origin: "https://joymeseci.com", "x-forwarded-for": "1.2.3.4", ...headers },
+      body: JSON.stringify(body),
+    });
+  const keys = { siteKey: "site-k", secret: "sec" };
+
+  // Qviks + siteverify in one mock: token "good" passes.
+  function mockNet() {
+    const qviks: Record<string, unknown>[] = [];
+    let verifies = 0;
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      if (String(url).includes("siteverify")) {
+        verifies++;
+        const fd = init.body as FormData;
+        return Response.json({ success: fd.get("response") === "good" && fd.get("secret") === "sec" });
+      }
+      qviks.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true, saved: true }, { status: 201 });
+    }) as unknown as typeof fetch;
+    return { qviks, verifies: () => verifies };
+  }
+
+  it("Turnstile: no or bad token -> 400 with the site key, good token passes and is not forwarded", async () => {
+    const net = mockNet();
+    const POST = createLeadHandler({ key: "k", apiUrl: "https://q.test", turnstile: keys, minFillMs: 3000 });
+    const none = await POST(post({ name: "a", email: "a@b.cz", elapsedMs: 5000 }));
+    expect(none.status).toBe(400);
+    expect(await none.json()).toEqual({ error: "turnstile", turnstile: "site-k" });
+    expect((await POST(post({ name: "a", email: "a@b.cz", elapsedMs: 5000, turnstile: "bad" }))).status).toBe(400);
+    const ok = await POST(post({ name: "a", email: "a@b.cz", elapsedMs: 5000, turnstile: "good" }));
+    expect(ok.status).toBe(201);
+    expect(net.qviks).toHaveLength(1);
+    expect(net.qviks[0].turnstile).toBeUndefined();
+    expect(net.qviks[0].elapsedMs).toBeUndefined();
+  });
+
+  it("per-site keys from a function; missing keys fail closed in production only", async () => {
+    mockNet();
+    const POST = createLeadHandler({ key: "k", apiUrl: "https://q.test", turnstile: (_r, b) => (b.site === "a" ? keys : null) });
+    expect(await (await POST(post({ site: "a", name: "a", email: "a@b.cz" }))).json()).toEqual({ error: "turnstile", turnstile: "site-k" });
+    // NODE_ENV is "test" here: keyless site is let through.
+    expect((await POST(post({ site: "b", name: "a", email: "a@b.cz" }))).status).toBe(201);
+    const env = process.env as Record<string, string | undefined>;
+    const prev = env.NODE_ENV;
+    env.NODE_ENV = "production";
+    try {
+      const res = await POST(post({ site: "b", name: "a", email: "a@b.cz" }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "turnstile" });
+    } finally {
+      env.NODE_ENV = prev;
+    }
+  });
+
+  it("minFillMs: too fast or missing = silent fake success, Turnstile not even asked", async () => {
+    const net = mockNet();
+    const POST = createLeadHandler({ key: "k", apiUrl: "https://q.test", turnstile: keys, minFillMs: 3000 });
+    for (const elapsedMs of [100, undefined, "5000"]) {
+      const res = await POST(post({ name: "a", email: "a@b.cz", elapsedMs, turnstile: "good" }));
+      expect(await res.json()).toEqual({ ok: true, saved: false });
+    }
+    expect(net.verifies()).toBe(0);
+    expect(net.qviks).toHaveLength(0);
+  });
+
+  it("guard runs first; prepare builds the payload or answers; onResult can replace the answer", async () => {
+    const net = mockNet();
+    const results: number[] = [];
+    const POST = createLeadHandler({
+      key: "k",
+      apiUrl: "https://q.test",
+      guard: (req) => (req.headers.get("x-block") ? Response.json({ error: "Forbidden" }, { status: 403 }) : null),
+      prepare: ({ body, locale }) =>
+        body.email === "mail-only@x.sk" ? Response.json({ ok: true, mailed: true }, { status: 201 }) : { name: body.name, email: body.email, topic: body.topic, locale },
+      locale: () => "sk",
+      onResult: ({ status }) => {
+        results.push(status);
+      },
+    });
+    expect((await POST(post({ name: "a", email: "a@b.cz" }, { "x-block": "1" }))).status).toBe(403);
+    expect(await (await POST(post({ name: "a", email: "mail-only@x.sk" }))).json()).toEqual({ ok: true, mailed: true });
+    expect((await POST(post({ name: "a", email: "a@b.cz", topic: "joymeseci.com" }))).status).toBe(201);
+    expect(net.qviks).toEqual([{ name: "a", email: "a@b.cz", topic: "joymeseci.com", locale: "sk" }]);
+    expect(results).toEqual([201]);
+
+    const fallback = createLeadHandler({
+      key: "k",
+      apiUrl: "https://q.test",
+      onResult: ({ status }) => (status >= 500 ? Response.json({ ok: true, fallback: true }, { status: 201 }) : undefined),
+    });
+    globalThis.fetch = mock(async () => {
+      throw new Error("down");
+    }) as unknown as typeof fetch;
+    expect(await (await fallback(post({ name: "a", email: "a@b.cz" }))).json()).toEqual({ ok: true, fallback: true });
+  });
+
+  it("key function null = 404, phone is forwarded", async () => {
+    const net = mockNet();
+    const POST = createLeadHandler({ key: (_r, b) => (b.site === "x" ? null : "k"), apiUrl: "https://q.test" });
+    expect((await POST(post({ site: "x", name: "a", email: "a@b.cz" }))).status).toBe(404);
+    await POST(post({ name: "a", email: "a@b.cz", phone: "+421 900\n123" }));
+    expect(net.qviks[0].phone).toBe("+421 900 123");
+  });
+});
